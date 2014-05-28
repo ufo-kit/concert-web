@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+{% block body %}
+  <h2>Sessions</h2>
+  <ul class="list-group">
+  {% for name in sessions %}
+    <li class="list-group-item"><a href="session/{{ name }}">{{ name }}</a></li>
+    {% endfor %}
+  </ul>
+{% endblock %}
