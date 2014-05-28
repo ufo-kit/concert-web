@@ -1,27 +1,37 @@
 {% extends "layout.html" %}
 {% block body %}
-  {% for instance in instances %}
-  <div class="panel panel-default">
-    <div class="panel-heading">{{ instance.name }}</div>
-    <div class="panel-body">
-      <p>{{ instance.device.__doc__ }}</p>
-      <table class="table table-condensed table-hover">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Value</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for param in instance.device %}
-          <tr>
-            <td><code>{{ param.name }}</code></td>
-            <td>{{ param.get().result() }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+  <div class="panel-group" id="accordion">
+    {% for instance in instances %}
+    <div class="panel panel-default">
+      <div class="panel-heading">
+        <h4 class="panel-title">
+          <a data-toggle="collapse" data-parent="#accordion" href="#collapse{{ instance.name}}">{{ instance.name }}</a>
+        </h4>
+      </div>
+      <div id="collapse{{ instance.name }}" class="panel-collapse collapse">
+        <div class="panel-body">
+          <p>{{ instance.device.__doc__ }}</p>
+          <table class="table table-condensed table-hover">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for param in instance.device %}
+              <tr>
+                <td><code>{{ param.name }}</code></td>
+                <td>{{ param.get().result() }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
+    {% endfor %}
   </div>
-  {% endfor %}
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.0/jquery.min.js"></script>
+  <script src="//netdna.bootstrapcdn.com/bootstrap/3.1.1/js/bootstrap.min.js"></script>
 {% endblock %}
