@@ -22,7 +22,10 @@
             {% for param in instance.device %}
               <tr>
                 <td><code>{{ param.name }}</code></td>
-                <td>{{ param.get().result() }}</td>
+                <td>
+                  <input type="number" step="0.001" value="{{ param.get().result().magnitude }}">
+                  <small>{{ param.unit | unit_to_html | safe }}</small>
+                </td>
               </tr>
             {% endfor %}
             </tbody>
