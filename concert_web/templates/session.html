@@ -2,6 +2,15 @@
 {% block body %}
   <div class="panel-group" id="accordion">
     {% for instance in instances %}
+    <style> .panel-title a {
+      display: block;
+      padding: 10px 15px;
+      margin: -10px -15px;
+    }
+    .panel-title:hover {
+      cursor: pointer;
+    }
+    </style>
     <div class="panel panel-default">
       <div class="panel-heading">
         <h4 class="panel-title">
@@ -16,6 +25,7 @@
               <tr>
                 <th>Name</th>
                 <th>Value</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
@@ -23,9 +33,10 @@
               <tr>
                 <td><code>{{ param.name }}</code></td>
                 <td>
-                  <input type="number" step="0.001" value="{{ param.get().result().magnitude }}">
+                  <input class="item" id="_{{ instance.name }}_{{ param.name }}" name="{{ param.name }}" type="number" step="0.001" value="{{ param.get().result().magnitude }}" device="{{ instance.name }}" full_value="{{ param.get().result() }}" unit="{{ param.unit }}" size=16>
                   <small>{{ param.unit | unit_to_html | safe }}</small>
                 </td>
+                <td><div class="loader" id="{{ instance.name }}_{{ param.name }}"><img src="{{ url_for('static', filename='ajax-loader.gif') }}"></div></td>
               </tr>
             {% endfor %}
             </tbody>
@@ -35,6 +46,158 @@
     </div>
     {% endfor %}
   </div>
+  <div id=terminal></div>
+
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.0/jquery.min.js"></script>
+  <script src="http://terminal.jcubic.pl/js/jquery.terminal-0.8.8.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='jquery.terminal.css') }}">
+
+  <script>
+    $(document).ready(function(){
+      var first_load = true;
+      $(".loader").hide();
+      $(".item:input").removeAttr("disabled");
+
+      $("#ring_current").replaceWith("<small>Read only</small>");
+      $("#ring_energy").replaceWith("<small>Read only</small>");
+      $("#ring_lifetime").replaceWith("<small>Read only</small>");
+      $("#camera_sensor_pixel_height").replaceWith("<small>Read only</small>");
+      $("#camera_sensor_pixel_width").replaceWith("<small>Read only</small>");
+      $("#camera_state").replaceWith("<small>Read only</small>");
+      $("#motor_state").replaceWith("<small>Read only</small>");
+      $(".item:input[device=ring]").attr({disabled: "disabled"});
+      $("#_camera_sensor_pixel_height").attr({disabled: "disabled", type: "text"});
+      $("#_camera_sensor_pixel_width").attr({disabled: "disabled", type: "text"});
+      $("#_motor_position").attr({max: "100", min: "-100"})
+
+      var full_value = []
+      $.each($(".item:input"), function() {
+        if ($(this).attr("name") == "state") {
+          $(this).attr({disabled: "disabled", type: "text"});
+          $(this).val($(this).attr("full_value"));
+        }
+      });
+
+      if ($("#_motor_position").val() >= 100 || $("#_motor_position").val() <= -100) {
+        $("#_motor_state").val("hard-limit");
+      }
+
+      if(!$(".item:input[name=trigger_mode]").val()) {
+        $("#camera_trigger_mode").replaceWith("<div class='loader' id='camera_trigger_mode'><small>" + $('.item:input[name=trigger_mode]').attr('full_value') + "</small>");
+      }
+
+      var tab_completion;
+      $.ajax({
+        type: "GET",
+        url: "/tab_complete/{{ session_name }}",
+        connection: close,
+        dataType: "json",
+        success: function(completion) {
+          tab_completion = completion;
+        }
+      });
+
+      $("#terminal").terminal(function(command, term){
+        line = {
+            'execute': command
+        };
+
+        var arr = [];
+        $.each($(".item:input"), function() {
+          if(!$(".item:input[name=" + $(this).attr("name") + "]").attr("disabled")) {
+            arr.push([$(this).attr("device"), $(this).attr("name"), $(this).val(), $(this).attr("unit")]);
+          }
+        });
+
+        if(first_load == true){
+          arr.push([command])
+          data = JSON.stringify(arr)
+          first_load = false;
+        } else {
+          data = JSON.stringify(line)
+        }
+
+        $.ajax({
+          type: "POST",
+          url: "/terminal/{{ session_name }}",
+          data: data,
+          contentType: "application/json; charset=utf-8",
+          connection: close,
+          dataType: "json",
+          success: function(data) {
+            term.echo(data["return"]);
+            if(!$(".item:input[name=" + data["name"] + "]").attr("disabled") &&
+                $(".item:input[name=" + data["name"] + "]").attr("device") == data["device"]) {
+              $(".item:input[name=" + data["name"] + "]").val(data["value"]);
+            }
+            if(data["current"] != "") {
+              $(".item:input[name=current]").val(data["current"]);
+            }
+            if(data["energy"] != "") {
+              $(".item:input[name=energy]").val(data["energy"]);
+            }
+            if(data["lifetime"] != "") {
+              $(".item:input[name=lifetime]").val(data["lifetime"]);
+            }
+          }
+        });
+        }, { prompt: '>', history: true, height: '500',
+             completion: function(terminal, command, callback) {
+             callback(tab_completion);
+           }
+      });
+
+      $(".item:input").change(function(event){
+        var device = $(this).attr("device");
+        var name = $(this).attr("name");
+        var newVal = $(this).val();
+
+        var obj = [];
+        tmp = {
+          'device': device,
+          'name': name,
+          'value': newVal,
+          'error': ""
+        };
+        obj.push(tmp);
+
+        $("#" + device + "_" + name).show();
+        $(this).attr("disabled", "disabled")
+
+        $.ajax({
+          type: "POST",
+          url: "/change/{{ session_name }}",
+          data: JSON.stringify(tmp),
+          contentType: "application/json; charset=utf-8",
+          connection: close,
+          dataType: "json",
+          success: function(data) {
+            $("#" + data["device"] + "_" + data["name"]).hide();
+            $("input[name=" + data["name"] + "]").removeAttr("disabled");
+
+            if ($("#_motor_position").val() >= 100 || $("#_motor_position").val() <= -100) {
+              $("#_motor_state").val("hard-limit");
+            }
+            else {
+              $("#_motor_state").val("standby");
+            }
+
+            if (data["error"] != "") {
+              alert(data["error"]);
+            }
+
+            if (name == "trigger_mode" && $.isNumeric(newVal)) {
+              $("#camera_trigger_mode").replaceWith("<td><div class='loader' id='camera_trigger_mode'><img src='{{ url_for('static', filename='ajax-loader.gif') }}'></div></td>")
+              $("#camera_trigger_mode").hide();
+            }
+            else if (name == "trigger_mode" && !newVal) {
+              $("#camera_trigger_mode").replaceWith("<div class='loader' id='camera_trigger_mode'><small>" + $('.item:input[name=trigger_mode]').attr('full_value') + "</small>");
+              $("#camera_trigger_mode").show();
+            }
+          }
+        });
+      });
+    });
+  </script>
   <script src="//netdna.bootstrapcdn.com/bootstrap/3.1.1/js/bootstrap.min.js"></script>
 {% endblock %}
