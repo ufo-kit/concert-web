@@ -10,6 +10,9 @@
     .panel-title:hover {
       cursor: pointer;
     }
+    #play_button_{{ instance.name }}:hover {
+      cursor: pointer;
+    }
     </style>
     <div class="panel panel-default">
       <div class="panel-heading">
@@ -29,14 +32,28 @@
               </tr>
             </thead>
             <tbody>
+            <tr>
+              <td>
+                <code>methods</code>
+              </td>
+              <td>
+                <select id="methods_{{ instance.name }}"></select>
+              </td>
+              <td>
+                <input id="methods_input_{{ instance.name }}" type="text" size=30><img src="{{ url_for('static', filename='play_button.jpg') }}" id="play_button_{{ instance.name }}">
+              </td>
+            </tr>
             {% for param in instance.device %}
               <tr>
                 <td><code>{{ param.name }}</code></td>
                 <td>
-                  <input class="item" id="_{{ instance.name }}_{{ param.name }}" name="{{ param.name }}" type="number" step="0.001" value="{{ param.get().result().magnitude }}" device="{{ instance.name }}" full_value="{{ param.get().result() }}" unit="{{ param.unit }}" size=16>
+                  <input class="item" id="_{{ instance.name }}_{{ param.name }}" name="{{ param.name }}" type="number" step="0.001" value="{{ param.get().result().magnitude }}" device="{{ instance.name }}" full_value="{{ param.get().result() }}" unit="{{ param.unit }}" writable="{{ param.writable }}" locked="{{ param.locked }}" size=16>
                   <small>{{ param.unit | unit_to_html | safe }}</small>
                 </td>
-                <td><div class="loader" id="{{ instance.name }}_{{ param.name }}"><img src="{{ url_for('static', filename='ajax-loader.gif') }}"></div></td>
+                <td>
+                  <div class="lock" style="opacity:0.5; float:left; cursor:pointer" id="lock_{{ instance.name }}_{{ param.name }}"><img src="{{ url_for('static', filename='unlocked.png') }}">&emsp;</div>
+                  <div class="loader" device="{{ instance.name }}" id="{{ instance.name }}_{{ param.name }}"><img src="{{ url_for('static', filename='ajax-loader.gif') }}"></div>
+                </td>
               </tr>
             {% endfor %}
             </tbody>
@@ -53,40 +70,57 @@
   <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='jquery.terminal.css') }}">
 
   <script>
-    $(document).ready(function(){
-      var first_load = true;
-      $(".loader").hide();
-      $(".item:input").removeAttr("disabled");
+    $(document).ready(function() {
+      var data_from_gui = [];
+      var devices = [];
+      var tab_completion;
+      var previous;
+      var to_do;
 
-      $("#ring_current").replaceWith("<small>Read only</small>");
-      $("#ring_energy").replaceWith("<small>Read only</small>");
-      $("#ring_lifetime").replaceWith("<small>Read only</small>");
-      $("#camera_sensor_pixel_height").replaceWith("<small>Read only</small>");
-      $("#camera_sensor_pixel_width").replaceWith("<small>Read only</small>");
-      $("#camera_state").replaceWith("<small>Read only</small>");
-      $("#motor_state").replaceWith("<small>Read only</small>");
-      $(".item:input[device=ring]").attr({disabled: "disabled"});
-      $("#_camera_sensor_pixel_height").attr({disabled: "disabled", type: "text"});
-      $("#_camera_sensor_pixel_width").attr({disabled: "disabled", type: "text"});
-      $("#_motor_position").attr({max: "100", min: "-100"})
-
-      var full_value = []
       $.each($(".item:input"), function() {
-        if ($(this).attr("name") == "state") {
-          $(this).attr({disabled: "disabled", type: "text"});
+        if (!$(this).val()) {
+          $(this).attr({type: "text"});
           $(this).val($(this).attr("full_value"));
         }
+        if ($(this).attr("writable") == "False") {
+          $("#" + $(this).attr("id").substring(1)).html("<small>Read only</small>");
+          $(this).attr({disabled: "disabled"});
+        }
+        else {
+          $(this).removeAttr("disabled");
+        }
+        devices.push($(this).attr("device"));
+        if (!$(".item:input[name=" + $(this).attr("name") + "]").attr("disabled")) {
+          data_from_gui.push([$(this).attr("device"), $(this).attr("name"), $(this).val(), $(this).attr("unit")]);
+        }
+        if ($(this).is(":invalid")) {
+          $(this).tooltip('disable');
+          $(this).css({"box-shadow": "none", ":-moz-submit-invalid": "box-shadow: none", ":-moz-ui-invalid": "box-shadow:none"});
+        }
+      });
+      devices = $.unique(devices);
+
+      $.each(devices, function(index, value) {
+        $("#play_button_" + value).click(function() {
+          to_do = {'method': $("#methods_input_" + value).val()};
+          do_method();
+        });
+        $("#methods_" + value).change(function() {
+          $("#methods_input_" + value).val($(this).val());
+        });
+        $("#methods_input_" + value).keypress(function(e) {
+          if(e.which == 13) {
+            to_do = {'method': $("#methods_input_" + value).val()};
+            do_method();
+          }
+        });
+        $.each($(".loader[device=" + value + "]"), function() {
+          if ($(this).html().indexOf("img src") != -1) {
+            $(this).hide();
+          }
+        });
       });
 
-      if ($("#_motor_position").val() >= 100 || $("#_motor_position").val() <= -100) {
-        $("#_motor_state").val("hard-limit");
-      }
-
-      if(!$(".item:input[name=trigger_mode]").val()) {
-        $("#camera_trigger_mode").replaceWith("<div class='loader' id='camera_trigger_mode'><small>" + $('.item:input[name=trigger_mode]').attr('full_value') + "</small>");
-      }
-
-      var tab_completion;
       $.ajax({
         type: "GET",
         url: "/tab_complete/{{ session_name }}",
@@ -97,47 +131,262 @@
         }
       });
 
-      $("#terminal").terminal(function(command, term){
-        line = {
-            'execute': command
-        };
-
-        var arr = [];
-        $.each($(".item:input"), function() {
-          if(!$(".item:input[name=" + $(this).attr("name") + "]").attr("disabled")) {
-            arr.push([$(this).attr("device"), $(this).attr("name"), $(this).val(), $(this).attr("unit")]);
-          }
-        });
-
-        if(first_load == true){
-          arr.push([command])
-          data = JSON.stringify(arr)
-          first_load = false;
-        } else {
-          data = JSON.stringify(line)
+      $.ajax({
+        type: "GET",
+        url: "/get_methods/{{ session_name }}",
+        connection: close,
+        dataType: "json",
+        success: function(methods) {
+          $.each(methods, function(index, value) {
+            var separated_methods = value[1].split(",");
+            $.each(separated_methods, function(i, val) {
+              method = value[0] + "." + val + "()";
+              $("#methods_" + value[0]).append("<option value=" + method + ">" + method + "</option>");
+            });
+            $("#methods_input_" + value[0]).val($("#methods_" + value[0]).find("option:selected").attr("value"));
+          });
         }
+      });
 
+      $.ajax({
+        type: "GET",
+        url: "/upper_lower/{{ session_name }}",
+        connection: close,
+        dataType: "json",
+        success: function(ul_device) {
+          if (ul_device != "") {
+            $.each(ul_device, function(index, value) {
+              if (value['upper'] != "" && $("#_" + value['device'] + "_position").length != 0) {
+                pos_id = "#_" + value['device'] + "_position";
+                $(pos_id).attr({max: value['upper']});
+                if ($(pos_id).val() > parseFloat($(pos_id).attr("max"))) {
+                  $(pos_id).val($(pos_id).attr("max"));
+                }
+              }
+              if (value['lower'] != "" && $("#_" + value['device'] + "_position").length != 0) {
+                pos_id = "#_" + value['device'] + "_position";
+                $(pos_id).attr({min: value['lower']});
+                if ($(pos_id).val() < parseFloat($(pos_id).attr("min"))) {
+                  $(pos_id).val($(pos_id).attr("min"));
+                }
+              }
+            });
+          }
+        }
+      });
+
+      $.ajax({
+        type: "POST",
+        url: "/data_for_terminal/{{ session_name }}",
+        data: JSON.stringify(data_from_gui),
+        contentType: "application/json; charset=utf-8",
+        connection: close,
+        dataType: "json",
+        success: function(hard_limit) {
+          if (hard_limit["device"] != "") {
+            $("#_" + hard_limit['device'] + "_state").val(hard_limit['state']);
+          }
+        }
+      });
+
+      $(".lock").click(function() {
+        id = $(this).attr("id").substring(4);
+        if ($("#" + id).attr("locked") == "False") {
+          $(this).html("<img src='{{ url_for('static', filename='locked.png') }}'>&emsp;");
+          $("#" + id).attr({locked: "True", disabled: "disabled"});
+          method = "lock()";
+        }
+        else {
+          $(this).html("<img src='{{ url_for('static', filename='unlocked.png') }}'>&emsp;");
+          $("#" + id).attr({locked: "False"});
+          if ($("#" + id).attr("writable") == "True") {
+            $("#" + id).removeAttr("disabled");
+          }
+          method = "unlock()";
+        }
+        json_lock = {"method": $("#" + id).attr("device") + "['" + $("#" + id).attr("name") + "']." + method};
         $.ajax({
           type: "POST",
-          url: "/terminal/{{ session_name }}",
-          data: data,
+          url: "/lock_unlock/{{ session_name }}",
+          data: JSON.stringify(json_lock),
+          connection: close,
+          dataType: "json"
+        });
+      });
+
+      function lock(device) {
+        if (device.indexOf("[") != -1) {
+          dev = device.split('["')[0];
+          name = device.split('["')[1].split('"]')[0];
+          id = "_" + dev + "_" + name
+          $("#" + id).attr({disabled: "disabled", locked: "True"});
+          $("#lock" + id).html("<img src='{{ url_for('static', filename='locked.png') }}'>&emsp;");
+        }
+        else {
+          $.each($(".item:input[device=" + device + "]"), function() {
+            $(this).attr({disabled: "disabled", locked: "True"});
+            $("#lock" + $(this).attr("id")).html("<img src='{{ url_for('static', filename='locked.png') }}'>&emsp;");
+          });
+        }
+      }
+
+      function unlock(device) {
+        if (device.indexOf("[") != -1) {
+          dev = device.split('["')[0];
+          name = device.split('["')[1].split('"]')[0];
+          id = "_" + dev + "_" + name
+          if ($("#" + id).attr("writable") == "True") {
+            $("#" + id).removeAttr("disabled");
+          }
+          $("#" + id).attr({locked: "False"});
+          $("#lock" + id).html("<img src='{{ url_for('static', filename='unlocked.png') }}'>&emsp;");
+        }
+        else {
+          $.each($(".item:input[device=" + device + "]"), function() {
+            if ($(this).attr("writable") == "True") {
+              $(this).removeAttr("disabled");
+            }
+            $(this).attr({locked: "False"});
+            $("#lock" + $(this).attr("id")).html("<img src='{{ url_for('static', filename='unlocked.png') }}'>&emsp;");
+          });
+        }
+      }
+
+      function do_method() {
+        if (to_do['method'].indexOf(".lock()") != -1) {
+          device = to_do['method'].split(".", 1)[0];
+          lock(device);
+        }
+        if (to_do['method'].indexOf(".unlock()") != -1) {
+          device = to_do['method'].split(".", 1)[0];
+          unlock(device);
+        }
+        $.ajax({
+          type: "POST",
+          url: "/method/{{ session_name }}",
+          data: JSON.stringify(to_do),
           contentType: "application/json; charset=utf-8",
           connection: close,
           dataType: "json",
-          success: function(data) {
-            term.echo(data["return"]);
-            if(!$(".item:input[name=" + data["name"] + "]").attr("disabled") &&
-                $(".item:input[name=" + data["name"] + "]").attr("device") == data["device"]) {
-              $(".item:input[name=" + data["name"] + "]").val(data["value"]);
+          success: function(method_data) {
+            if (method_data['traceback'] == "") {
+              if (method_data['output'] != "") {
+                $.terminal.active(term.echo(method_data['output']));
+              }
+              if (method_data['state'] != "") {
+                $("#_" + method_data['device'] + "_state").val(method_data['state']);
+              }
             }
-            if(data["current"] != "") {
-              $(".item:input[name=current]").val(data["current"]);
+            else {
+              $.terminal.active(term.echo(method_data["traceback"]));
             }
-            if(data["energy"] != "") {
-              $(".item:input[name=energy]").val(data["energy"]);
+          }
+        });
+      };
+
+      $(".item:input").on('focus', function() {
+        previous = this.value;
+      }).change(function(event){
+        var device = $(this).attr("device");
+        var name = $(this).attr("name");
+        var newVal = $(this).val();
+        $("#" + device + "_" + name).show();
+        $(this).attr("disabled", "disabled");
+        if (newVal == "") {
+          newVal = previous;
+          $(this).val(previous);
+          $("#" + device + "_" + name).hide();
+          $(this).removeAttr('disabled');
+        }
+        else {
+          data_to_change = {'device': device, 'name': name, 'value': newVal};
+          $.ajax({
+            type: "POST",
+            url: "/change/{{ session_name }}",
+            data: JSON.stringify(data_to_change),
+            contentType: "application/json; charset=utf-8",
+            connection: close,
+            dataType: "json",
+            success: function(changed_data) {
+              $("#" + device + "_" + name).hide();
+              $("input[name=" + name + "]").removeAttr('disabled');
+              id = "#_" + device + "_" + name;
+              if (changed_data['error'] != "") {
+                $.terminal.active(term.echo(changed_data['error']));
+                if (newVal == "") {
+                  $(id).val(previous);
+                }
+              }
+              if (changed_data['hardlimit'] == "True") {
+                $("#_" + device + "_state").val("hard-limit");
+              }
+              else {
+                $("#_" + device + "_state").val("standby");
+              }
+              if ($(id).val() > parseFloat($(id).attr("max"))) {
+                newVal = parseFloat($(id).attr("max"));
+                $(id).val(newVal);
+              }
+              else if ($(id).val() < parseFloat($(id).attr("min"))) {
+                newVal = parseFloat($(id).attr("min"));
+                $(id).val(newVal);
+              }
             }
-            if(data["lifetime"] != "") {
-              $(".item:input[name=lifetime]").val(data["lifetime"]);
+          });
+        }
+      });
+
+      var term = $("#terminal").terminal(function(command, term){
+        line = {'execute': command};
+        $.ajax({
+          type: "POST",
+          url: "/terminal/{{ session_name }}",
+          data: JSON.stringify(line),
+          contentType: "application/json; charset=utf-8",
+          connection: close,
+          dataType: "json",
+          success: function(line_data) {
+            if (line_data['traceback'] != "") {
+              term.echo(line_data['traceback']);
+            }
+            else {
+              if (line_data['output'] != "") {
+                term.echo(line_data['output']);
+              }
+              if (line['execute'].indexOf(".lock()") != -1) {
+                device = line['execute'].split(".", 1)[0];
+                lock(device);
+              }
+              else if (line['execute'].indexOf(".unlock()") != -1) {
+                device = line['execute'].split(".", 1)[0];
+                unlock(device);
+              }
+              id = "#_" + line_data['device'] + "_" + line_data['name'];
+              if((!$(id).attr("disabled")) && ($(id).attr("locked") == "False") && (line_data['value'] != "")) {
+                if (line_data['value'] > parseFloat($(id).attr("max"))) {
+                  $(id).val(parseFloat($(id).attr("max")));
+                }
+                else if (line_data['value'] < parseFloat($(id).attr("min"))) {
+                  $(id).val(parseFloat($(id).attr("min")));
+                }
+                else {
+                  $(id).val(line_data['value']);
+                }
+              }
+              if ((line['execute'].indexOf(".start_recording()") != -1) && (line_data["output"] == "")) {
+                device = line['execute'].split(".", 1)[0];
+                $("#_" + device + "_state").val("recording");
+              }
+              if ((line['execute'].indexOf(".stop_recording()") != -1) && (line_data["output"] == "")) {
+                device = line['execute'].split(".", 1)[0];
+                $("#_" + device + "_state").val("standby");
+              }
+              if (line_data['hardlimit'] == "True") {
+                $("#_" + line_data['device'] + "_state").val("hard-limit");
+              }
+              else {
+                $("#_" + line_data['device'] + "_state").val("standby");
+              }
             }
           }
         });
@@ -145,57 +394,6 @@
              completion: function(terminal, command, callback) {
              callback(tab_completion);
            }
-      });
-
-      $(".item:input").change(function(event){
-        var device = $(this).attr("device");
-        var name = $(this).attr("name");
-        var newVal = $(this).val();
-
-        var obj = [];
-        tmp = {
-          'device': device,
-          'name': name,
-          'value': newVal,
-          'error': ""
-        };
-        obj.push(tmp);
-
-        $("#" + device + "_" + name).show();
-        $(this).attr("disabled", "disabled")
-
-        $.ajax({
-          type: "POST",
-          url: "/change/{{ session_name }}",
-          data: JSON.stringify(tmp),
-          contentType: "application/json; charset=utf-8",
-          connection: close,
-          dataType: "json",
-          success: function(data) {
-            $("#" + data["device"] + "_" + data["name"]).hide();
-            $("input[name=" + data["name"] + "]").removeAttr("disabled");
-
-            if ($("#_motor_position").val() >= 100 || $("#_motor_position").val() <= -100) {
-              $("#_motor_state").val("hard-limit");
-            }
-            else {
-              $("#_motor_state").val("standby");
-            }
-
-            if (data["error"] != "") {
-              alert(data["error"]);
-            }
-
-            if (name == "trigger_mode" && $.isNumeric(newVal)) {
-              $("#camera_trigger_mode").replaceWith("<td><div class='loader' id='camera_trigger_mode'><img src='{{ url_for('static', filename='ajax-loader.gif') }}'></div></td>")
-              $("#camera_trigger_mode").hide();
-            }
-            else if (name == "trigger_mode" && !newVal) {
-              $("#camera_trigger_mode").replaceWith("<div class='loader' id='camera_trigger_mode'><small>" + $('.item:input[name=trigger_mode]').attr('full_value') + "</small>");
-              $("#camera_trigger_mode").show();
-            }
-          }
-        });
       });
     });
   </script>

@@ -8,7 +8,6 @@ import traceback
 import StringIO
 import json
 import sys
-import re
 
 
 class DeviceInstance(object):
@@ -44,8 +43,10 @@ def session(name):
         app.logger.error(str(e))
         abort(501)
 
+    global devices
     public_vars = [DeviceInstance(v, getattr(module, v)) for v in dir(module) if not v.startswith('_')]
     instances = { v.name: v for v in public_vars if isinstance(v.device, Device) }
+    devices = instances.keys()
     sessions[name] = Session(name, module, instances)
 
     return render_template('session.html', session_name=name, instances=instances.values())
@@ -60,6 +61,16 @@ unit_q = {
     '': ""
 }
 
+def get_exec_output(name, code):
+    exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
+    code_out = StringIO.StringIO()
+    sys.stdout = code_out
+    exec code in globals(), exec_globals
+    sys.stdout = sys.__stdout__
+    s = code_out.getvalue()
+    code_out.close()
+    return str(s)
+
 
 @app.route('/change/<name>', methods=['POST'])
 def change(name):
@@ -68,126 +79,197 @@ def change(name):
         abort(501)
 
     session = sessions[name]
-    data = request.get_json(force=True)
-    device_name, property_name, value = data['device'], data['name'], data['value']
+    data_to_change = request.get_json(force=True)
+    device_name = data_to_change['device']
+    property_name = data_to_change['name']
+    value = data_to_change['value']
     device = session.instances[device_name].device[property_name]
+    changed_data = {'error': '', 'hardlimit': 'False'}
+
+    def execute(future):
+        exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
+        try:
+            exec line in globals(), exec_globals
+        except NameError:
+            value = str(value)
+        except HardLimitError as herror:
+            changed_data['error'] = str(herror)
+            changed_data['hardlimit'] = "True"
+            pass
 
     try:
         unit = device.unit
-        line = str(device_name + "." + property_name + " = " + value + unit_q[str(unit)])
+        line = str(device_name + "." + property_name + " = " + str(value) + unit_q[str(unit)])
         if str(unit) == "1.0 1 / second":
             value = float(value)
         future = device.set(value * unit)
+        future.add_done_callback(execute)
+        return json.dumps(changed_data)
+
+    except NameError:
+        value = str(value)
+        line = str(device_name + "." + property_name + " = " + value + unit_q[str(unit)])
+        future = device.set(value * unit)
+        future.add_done_callback(execute)
+        return json.dumps(changed_data)
+
     except AttributeError:
-        if (property_name == "trigger_mode" and value == ''):
-            value = "'AUTO'"
-        line = str(device_name + "." + property_name + " = " + value)
+        line = str(device_name + "." + property_name + " = '" + value + "'")
         future = device.set(value)
-    except ValueError as verror:
-        data['error'] = str(verror)
-        return json.dumps(data)
+        future.add_done_callback(execute)
+        return json.dumps(changed_data)
 
-    if future.done():
-        exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
-        try:
-            exec(line, globals(), exec_globals)
-        except HardLimitError as herror:
-            pass
 
-    return json.dumps(data)
+@app.route('/terminal/<name>', methods=['POST'])
+def handle_line(name):
+    exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
+    line = request.get_json(force=True)
+    line_json = {'output': '' , 'device': '', 'name': '', 'value': '',
+                 'hardlimit': 'False', 'traceback': ''}
+
+    try:
+        if "=" in line['execute']:
+            before, sep, after = line['execute'].rpartition("=")
+            device, point, name = before.rpartition(".")
+            if "*" in after:
+                val, mult, unit = after.rpartition("*")
+            elif "/" in after:
+                val, div, unit = after.rpartition("/")
+            else:
+                val = after
+            line_json['device'] = device
+            line_json['name'] = name
+            line_json['value'] = val.replace(" ", "")
+            exec(line['execute'], globals(), exec_globals)
+        elif "(" in line['execute']:
+            exec(line['execute'], globals(), exec_globals)
+        else:
+            print_line = str("print " + line['execute'])
+            line_json['output'] = get_exec_output(name, print_line)
+
+        return json.dumps(line_json)
+
+    except HardLimitError as herror:
+        line_json['hardlimit'] = "True"
+        line_json['output'] = str(herror)
+        return json.dumps(line_json)
+
+    except:
+        exc = traceback.format_exc()
+        line_json['traceback'] = exc
+        return json.dumps(line_json)
+
+
+@app.route('/data_for_terminal/<name>', methods=['POST'])
+def get_data_from_gui(name):
+    exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
+    data_from_gui = request.get_json(force=True)
+    hard_limit_json = {'device': '', 'state': ''}
+
+    for x in data_from_gui:
+        if (len(x) == 4 and len(x[2]) > 0):
+            line = str(x[0] + "." + x[1] + " = " + x[2] + unit_q[str(x[3])])
+            try:
+                exec(line, globals(), exec_globals)
+            except NameError as e:
+                pass
+            except HardLimitError as herror:
+                state_code = "print " + x[0] + ".state"
+                hard_limit_json['state'] = get_exec_output(name, state_code)
+                hard_limit_json['device'] = x[0]
+                pass
+
+    return json.dumps(hard_limit_json)
 
 
 @app.route('/tab_complete/<name>', methods=['GET'])
 def get_tab_completion(name):
-    exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
-
-    completion_str = ''
-    devices = ["camera", "ring", "motor"]
+    completion_str = ""
+    completion = ""
     for device in devices:
-        output = StringIO.StringIO()
-        sys.stdout = output
-        exec("print ','.join(dir(" + device + "))", globals(), exec_globals)
-        sys.stdout = sys.__stdout__
-        s = output.getvalue()
+        code = "print ','.join(dir(" + device + "))"
+        s = get_exec_output(name, code)
         dir_device = s.split(',')
         dir_device = [x for x in dir_device if not x.startswith("_")]
         dir_device = [device + "." + str(x) for x in dir_device]
         dir_device = [x.replace('\n', '') for x in dir_device]
         completion_str += ','.join(dir_device) + ","
         completion = completion_str.split(",")
-        output.close()
 
     return json.dumps(completion)
 
 
-@app.route('/terminal/<name>', methods=['POST'])
-def handle_line(name):
+@app.route('/get_methods/<name>', methods=['GET'])
+def get_methods(name):
     exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
-    code_out = StringIO.StringIO()
-    sys.stdout = code_out
-    output = request.get_json(force=True)
-    line = "first_request"
-    answer = {'return': '' , 'device': '', 'name': '', 'value':'', 'position': '',
-              'current': '', 'energy': '', 'lifetime': ''}
+    d = dict(exec_globals, **globals())
+    methods_array = []
+    for device in devices:
+        code_out = StringIO.StringIO()
+        sys.stdout = code_out
+        code = """
+names = dir(""" + device + """)
+attrs = {name: getattr(""" + device + """, name) for name in names}
+funcs = {name: attr for name, attr in attrs.items() if hasattr(attr, '__call__') and not       name.startswith('_') and not name.startswith('get_') and not name.startswith('set_') }
+print sorted(funcs.keys())
+"""
+        exec (code, d, d)
+        sys.stdout = sys.__stdout__
+        dev_methods = code_out.getvalue()
+        char_arr = ['\n', '[', ']', ' ', "'", '"']
+        for x in char_arr:
+            dev_methods = dev_methods.replace(x, "")
+        methods_array.append(dev_methods)
 
-    if 'execute' not in output:
-        for x in output:
-            if (len(x) == 4 and len(x[2]) > 0):
-                line = str(x[0] + "." + x[1] + " = " + x[2] + unit_q[str(x[3])])
-                try:
-                    exec(line, globals(), exec_globals)
-                except HardLimitError as herror:
-                    answer['position'] = str(herror)
-                    for x in output:
-                        if len(x) == 4:
-                            if (len(x[2]) > 0 and x[1] != "position"):
-                                line = str(x[0] + "." + x[1] + " = " + x[2] + unit_q[str(x[3])])
-            else:
-                line = str(x[0])
+    methods = zip(devices, methods_array)
+    return json.dumps(methods)
 
-    if line == "first_request":
-        line = output['execute']
+
+@app.route('/upper_lower/<name>', methods=['GET'])
+def get_upper_lower(name):
+    up_low_devs = []
+    for device in devices:
+        code = "print dir(" + device + ")"
+        names = get_exec_output(name, code)
+        if "lower" in names:
+            lower_code = "print " + device + ".lower.magnitude"
+            lower = get_exec_output(name, lower_code)
+            up_low_devs.append({'device': device, 'lower': lower})
+        if "upper" in names:
+            upper_code = "print " + device + ".upper.magnitude"
+            upper = get_exec_output(name, upper_code)
+            up_low_devs.append({'device': device, 'upper': upper})
+
+    return json.dumps(up_low_devs)
+
+
+@app.route('/method/<name>', methods=['POST'])
+def exec_method(name):
+    to_do = request.get_json(force=True)
+    method_json = {'output': '', 'traceback': '', 'device': '', 'state': ''}
 
     try:
-        if "=" in line:
-            before, sep, after = line.rpartition("=")
-            device, point, name = before.rpartition(".")
-            val = re.findall(r"[-+]?\d*\.\d+|\d+", str(after))
-
-            answer['device'] = device
-            answer['name'] = name
-            answer['value'] = val
-            exec(line, globals(), exec_globals)
-        elif "(" in line:
-            exec(line, globals(), exec_globals)
-        else:
-            new_line = str("print " + line)
-            exec(new_line, globals(), exec_globals)
+        method_json['output'] = get_exec_output(name, to_do['method'])
+        if "start_recording()" in to_do['method'] or "stop_recording()" in to_do['method']:
+            device = str(to_do['method'].split(".")[0])
+            try:
+                state_code = "print " + device + ".state"
+                method_json['device'] = device
+                method_json['state'] = get_exec_output(name, state_code)
+            except:
+                pass
 
     except:
         exc = traceback.format_exc()
-        answer['return'] = exc
-        return json.dumps(answer)
+        method_json['traceback'] = exc
+        pass
 
-    sys.stdout = sys.__stdout__
-    s = code_out.getvalue()
-    answer["return"] += "%s" % s
-    code_out.close()
+    return json.dumps(method_json)
 
-    if line == "ring":
-        val = re.findall(r"[-+]?\d*\.\d+|\d+", answer["return"])
-        answer['device'] = 'ring'
-        answer['current'] = val[0]
-        answer['energy'] = val[1]
-        answer['lifetime'] = val[2]
-    elif "ring.current" in line:
-        val = re.findall(r"[-+]?\d*\.\d+|\d+", answer["return"])
-        answer['current'] = val
-    elif "ring.energy" in line:
-        val = re.findall(r"[-+]?\d*\.\d+|\d+", answer["return"])
-        answer['energy'] = val
-    elif "ring.lifetime" in line:
-        val = re.findall(r"[-+]?\d*\.\d+|\d+", answer["return"])
-        answer['lifetime'] = val
 
-    return json.dumps(answer)
+@app.route('/lock_unlock/<name>', methods=['POST'])
+def lock_unlock(name):
+    exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
+    data = request.get_json(force=True)
+    exec (data["method"], globals(), exec_globals)
+    return name
