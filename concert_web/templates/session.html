@@ -52,7 +52,9 @@
             </tr>
             {% for param in instance.device %}
               <tr>
-                <td><code>{{ param.name }}</code></td>
+                <td id="tooltip_{{ instance.name }}_{{ param.name }}" title="{{ param._parameter.help }}">
+                  <code>{{ param.name }}</code>
+                </td>
                 <td>
                   <input class="item" id="_{{ instance.name }}_{{ param.name }}" name="{{ param.name }}" type="number" step="0.001" value="{{ param.get().result().magnitude }}" device="{{ instance.name }}" full_value="{{ param.get().result() }}" unit="{{ param.unit }}" writable="{{ param.writable }}" locked="{{ param.locked }}" size=16>
                   <small>{{ param.unit | unit_to_html | safe }}</small>
@@ -106,6 +108,9 @@
         if ($(this).is(":invalid")) {
           $(this).tooltip('disable');
           $(this).css({"box-shadow": "none", ":-moz-submit-invalid": "box-shadow: none", ":-moz-ui-invalid": "box-shadow:none"});
+        }
+        if ($("#tooltip" + $(this).attr("id")).attr("title") == "None") {
+          $("#tooltip" + $(this).attr("id")).removeAttr("title");
         }
       });
       devices = $.unique(devices);
