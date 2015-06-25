@@ -22,7 +22,14 @@
       </div>
       <div id="collapse{{ instance.name }}" class="panel-collapse collapse">
         <div class="panel-body">
-          <p>{{ instance.device.__doc__ }}</p>
+          <div class="doku" style="text-align:left; float:left;">
+            {{ instance.device.__doc__ }}
+          </div>
+          <div class="polling" style="text-align:right; float:right;">
+            <input class="poll_check" type="checkbox" device="{{ instance.name }}">  polling
+            <input class="poll_val" type="text" device="{{ instance.name }}" value="5" size="5" >
+            <small> second</small>
+          </div>
           <table class="table table-condensed table-hover">
             <thead>
               <tr>
@@ -74,6 +81,9 @@
       var data_from_gui = [];
       var devices = [];
       var tab_completion;
+      var previous_poll;
+      var data_to_poll;
+      var focus_id;
       var previous;
       var to_do;
 
@@ -118,6 +128,18 @@
           if ($(this).html().indexOf("img src") != -1) {
             $(this).hide();
           }
+        });
+      });
+
+      $.each($(".poll_check:input"), function() {
+        $(this).removeAttr("checked");
+      });
+
+      var data_to_poll_arr = devices.slice();
+      $.each(devices, function(i, val) {
+        data_to_poll_arr[val] = [];
+        $.each($(".item:input[device=" + val + "]"), function(index, value) {
+          data_to_poll_arr[val].push([val, $(this).attr("name")]);
         });
       });
 
@@ -188,6 +210,52 @@
           }
         }
       });
+
+      $(".poll_val:input").on('focus', function() {
+        previous_poll = $(this).val();
+      }).change(function() {
+        if ($(this).val() == "") {
+          $(this).val(previous_poll);
+        }
+      });
+
+      $(".poll_check:input").click(function() {
+        device = $(this).attr("device");
+        if ($(this).is(":checked")) {
+          do_polling(device);
+        }
+        else {
+          clearTimeout(timer_arr[device]);
+        }
+      });
+
+      var timer_arr = devices.slice();
+      function do_polling(device) {
+        var poll = (function poll() {
+          timer_arr[device] = setTimeout(function() {
+            $.ajax({
+              type: "POST",
+              url: "/polling/{{ session_name }}",
+              data: JSON.stringify(data_to_poll_arr[device]),
+              connection: close,
+              dataType: "json",
+              complete: poll,
+              success: function(polling_data) {
+                $.each(polling_data, function(index, json) {
+                  if (!(focus_id == "_" + json['device'] + "_" + json['name'])) {
+                    if ($("#_" + json['device'] + "_" + json['name']).attr("type") == "number") {
+                      $("#_" + json['device'] + "_" + json['name']).val(parseFloat(json['value']));
+                    }
+                    else {
+                      $("#_" + json['device'] + "_" + json['name']).val(json['value']);
+                    }
+                  }
+                });
+              }
+            });
+          }, ($(".poll_val:input[device=" + device + "]").val() * 1000));
+        }());
+      }
 
       $(".lock").click(function() {
         id = $(this).attr("id").substring(4);
@@ -284,9 +352,18 @@
         });
       };
 
+      $(".item:input").on('input', function() {
+        focus_id = $(this).attr("id");
+      });
+
       $(".item:input").on('focus', function() {
         previous = this.value;
-      }).change(function(event){
+      }).change(function() {
+        focus_id = "";
+        if ($(this).is(":invalid")) {
+          $(this).tooltip('disable');
+          $(this).css({"box-shadow": "none", ":-moz-submit-invalid": "box-shadow: none", ":-moz-ui-invalid": "box-shadow:none"});
+        }
         var device = $(this).attr("device");
         var name = $(this).attr("name");
         var newVal = $(this).val();

@@ -273,3 +273,21 @@ def lock_unlock(name):
     data = request.get_json(force=True)
     exec (data["method"], globals(), exec_globals)
     return name
+
+
+@app.route('/polling/<name>', methods=['POST'])
+def poll(name):
+    get_data = request.get_json(force=True)
+    polling_data = []
+    for x in get_data:
+        code = "print " + x[0] + "." + x[1] + ".magnitude"
+        try:
+            val = get_exec_output(name, code)
+        except AttributeError:
+            code = code.replace(".magnitude", "")
+            val = get_exec_output(name, code)
+            val = val.replace("\n", "")
+            pass
+        polling_data.append({'device': x[0], 'name': x[1], 'value': val})
+
+    return json.dumps(polling_data)
