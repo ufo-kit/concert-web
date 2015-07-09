@@ -122,24 +122,41 @@ def change(name):
 
 @app.route('/terminal/<name>', methods=['POST'])
 def handle_line(name):
+    after = ""
     exec_globals = {key: value.device for key, value in sessions[name].instances.items()}
     line = request.get_json(force=True)
     line_json = {'output': '' , 'device': '', 'name': '', 'value': '',
-                 'hardlimit': 'False', 'traceback': ''}
+                 'hardlimit': '', 'traceback': ''}
+
+    if "=" in line['execute']:
+        before, sep, after = line['execute'].rpartition("=")
+        dev, point, name = before.rpartition(".")
+    elif "(" in line['execute']:
+        if "[" in line['execute']:
+            dev, bracket, method = line['execute'].rpartition("[")
+        else:
+            dev, point, method = line['execute'].rpartition(".")
+    else:
+        if "." in line['execute']:
+            dev, point, method = line['execute'].rpartition(".")
+        else:
+            dev = line['execute']
+
+    for device in devices:
+        if dev == device:
+            line_json['device'] = dev
 
     try:
         if "=" in line['execute']:
-            before, sep, after = line['execute'].rpartition("=")
-            device, point, name = before.rpartition(".")
             if "*" in after:
                 val, mult, unit = after.rpartition("*")
             elif "/" in after:
                 val, div, unit = after.rpartition("/")
             else:
                 val = after
-            line_json['device'] = device
             line_json['name'] = name
             line_json['value'] = val.replace(" ", "")
+            line_json['hardlimit'] = "False"
             exec(line['execute'], globals(), exec_globals)
         elif "(" in line['execute']:
             exec(line['execute'], globals(), exec_globals)
@@ -210,7 +227,7 @@ def get_methods(name):
         code = """
 names = dir(""" + device + """)
 attrs = {name: getattr(""" + device + """, name) for name in names}
-funcs = {name: attr for name, attr in attrs.items() if hasattr(attr, '__call__') and not       name.startswith('_') and not name.startswith('get_') and not name.startswith('set_') }
+funcs = {name: attr for name, attr in attrs.items() if hasattr(attr, '__call__') and not name.startswith('_') and not name.startswith('get_') and not name.startswith('set_') and not name == 'install_parameters' and not name == 'stash' and not name == 'restore' and not name == 'abort'}
 print sorted(funcs.keys())
 """
         exec (code, d, d)

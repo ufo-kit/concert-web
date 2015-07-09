@@ -10,8 +10,26 @@
     .panel-title:hover {
       cursor: pointer;
     }
-    #play_button_{{ instance.name }}:hover {
+    .fa-play:hover {
       cursor: pointer;
+      color: #999999;
+    }
+    .lock:hover {
+      color: #999999;
+    }
+    .fa-floppy-o:hover {
+      cursor: pointer;
+      color: #999999;
+    }
+    .fa-undo {
+      color: lightgrey;
+    }
+    .fa-undo:hover {
+      cursor: pointer;
+    }
+    .fa-power-off:hover {
+      cursor: pointer;
+      color: #999999;
     }
     </style>
     <div class="panel panel-default">
@@ -25,10 +43,13 @@
           <div class="doku" style="text-align:left; float:left;">
             {{ instance.device.__doc__ }}
           </div>
-          <div class="polling" style="text-align:right; float:right;">
+          <div class="dev_opts" style="text-align:right; float:right;">
             <input class="poll_check" type="checkbox" device="{{ instance.name }}">  polling
             <input class="poll_val" type="text" device="{{ instance.name }}" value="5" size="5" >
-            <small> second</small>
+            <small> second</small>&emsp;&ensp;
+            <i class="fa fa-floppy-o fa-lg" title="stash" device="{{ instance.name }}" id="{{ instance.name }}.stash()">&ensp;</i>
+            <i class="fa fa-undo fa-lg" title="restore" device="{{ instance.name }}" id="{{ instance.name }}.restore()">&ensp;</i>
+            <i class="fa fa-power-off fa-lg" title="abort" id="{{ instance.name }}.abort()">&ensp;</i>
           </div>
           <table class="table table-condensed table-hover">
             <thead>
@@ -47,7 +68,7 @@
                 <select id="methods_{{ instance.name }}"></select>
               </td>
               <td>
-                <input id="methods_input_{{ instance.name }}" type="text" size=30><img src="{{ url_for('static', filename='play_button.jpg') }}" id="play_button_{{ instance.name }}">
+                <input id="methods_input_{{ instance.name }}" type="text" size=25>&ensp;<i id="play_button_{{ instance.name }}" title="execute method" class="fa fa-play"></i>
               </td>
             </tr>
             {% for param in instance.device %}
@@ -60,8 +81,8 @@
                   <small>{{ param.unit | unit_to_html | safe }}</small>
                 </td>
                 <td>
-                  <div class="lock" style="opacity:0.5; float:left; cursor:pointer" id="lock_{{ instance.name }}_{{ param.name }}"><img src="{{ url_for('static', filename='unlocked.png') }}">&emsp;</div>
-                  <div class="loader" device="{{ instance.name }}" id="{{ instance.name }}_{{ param.name }}"><img src="{{ url_for('static', filename='ajax-loader.gif') }}"></div>
+                  <div class="lock" style="float:left; cursor:pointer" id="lock_{{ instance.name }}_{{ param.name }}"><i class="fa fa-unlock" title="lock" ></i>&emsp;</div>
+                  <div class="loader" device="{{ instance.name }}" id="{{ instance.name }}_{{ param.name }}"><i class="fa fa-spinner fa-spin"></i></div>
                 </td>
               </tr>
             {% endfor %}
@@ -76,6 +97,7 @@
 
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.0/jquery.min.js"></script>
   <script src="http://terminal.jcubic.pl/js/jquery.terminal-0.8.8.min.js"></script>
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
   <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='jquery.terminal.css') }}">
 
   <script>
@@ -84,7 +106,6 @@
       var devices = [];
       var tab_completion;
       var previous_poll;
-      var data_to_poll;
       var focus_id;
       var previous;
       var to_do;
@@ -130,7 +151,7 @@
           }
         });
         $.each($(".loader[device=" + value + "]"), function() {
-          if ($(this).html().indexOf("img src") != -1) {
+          if ($(this).html().indexOf("spinner") != -1) {
             $(this).hide();
           }
         });
@@ -216,6 +237,50 @@
         }
       });
 
+      $(".fa-power-off").click(function() {
+        to_do = {'method': $(this).attr("id")};
+        do_method();
+      });
+
+      $(".fa-floppy-o").click(function() {
+        stash_icon($(this).attr("device"));
+        to_do = {'method': $(this).attr("id")};
+        do_method();
+      });
+
+      $(".fa-undo").click(function() {
+        device = $(this).attr("device");
+        restore_icon(device);
+        to_do = {'method': $(this).attr("id"), 'restore': data_to_poll_arr[device]};
+        do_method();
+      });
+
+      var stash_counter = devices.slice();
+      $.each(stash_counter, function(index, val) {
+        stash_counter[val] = 0;
+      });
+      function stash_icon(device) {
+        stash_counter[device] = stash_counter[device] + 1;
+        $(".fa-undo[device=" + device + "]").css({color: "black"});
+        $(".fa-undo[device=" + device + "]").hover(function() {
+          $(this).css({color: "#999999"});
+        },
+        function() {
+          $(this).css({color: "black"});
+        });
+      }
+      function restore_icon(device) {
+        if (stash_counter[device] != 0) {
+          stash_counter[device] = stash_counter[device] - 1;
+        }
+        if (stash_counter[device] == 0) {
+          $(".fa-undo[device=" + device + "]").css({color: "lightgrey"});
+          $(".fa-undo[device=" + device + "]").hover(function() {
+            $(this).css({color: "lightgrey"});
+          });
+        }
+      }
+
       $(".poll_val:input").on('focus', function() {
         previous_poll = $(this).val();
       }).change(function() {
@@ -255,6 +320,10 @@
                       $("#_" + json['device'] + "_" + json['name']).val(json['value']);
                     }
                   }
+                  if ($("#_" + json['device'] + "_" + json['name']).is(":invalid")) {
+                    $("#_" + json['device'] + "_" + json['name']).tooltip('disable');
+                    $("#_" + json['device'] + "_" + json['name']).css({"box-shadow": "none", ":-moz-submit-invalid": "box-shadow: none", ":-moz-ui-invalid": "box-shadow:none"});
+                  }
                 });
               }
             });
@@ -265,12 +334,12 @@
       $(".lock").click(function() {
         id = $(this).attr("id").substring(4);
         if ($("#" + id).attr("locked") == "False") {
-          $(this).html("<img src='{{ url_for('static', filename='locked.png') }}'>&emsp;");
+          $(this).html("<i class='fa fa-lock' title='unlock'></i>&emsp;");
           $("#" + id).attr({locked: "True", disabled: "disabled"});
           method = "lock()";
         }
         else {
-          $(this).html("<img src='{{ url_for('static', filename='unlocked.png') }}'>&emsp;");
+          $(this).html("<i class='fa fa-unlock' title='lock'></i>&emsp;");
           $("#" + id).attr({locked: "False"});
           if ($("#" + id).attr("writable") == "True") {
             $("#" + id).removeAttr("disabled");
@@ -289,30 +358,34 @@
 
       function lock(device) {
         if (device.indexOf("[") != -1) {
-          dev = device.split('["')[0];
-          name = device.split('["')[1].split('"]')[0];
+          dev = device.split("[")[0];
+          name = device.split("[")[1].split("]")[0];
+          name = name.replace(/\'/g, "");
+          name = name.replace(/\"/g, "");
           id = "_" + dev + "_" + name
           $("#" + id).attr({disabled: "disabled", locked: "True"});
-          $("#lock" + id).html("<img src='{{ url_for('static', filename='locked.png') }}'>&emsp;");
+          $("#lock" + id).html("<i class='fa fa-lock' title='unlock'></i>&emsp;");
         }
         else {
           $.each($(".item:input[device=" + device + "]"), function() {
             $(this).attr({disabled: "disabled", locked: "True"});
-            $("#lock" + $(this).attr("id")).html("<img src='{{ url_for('static', filename='locked.png') }}'>&emsp;");
+            $("#lock" + $(this).attr("id")).html("<i class='fa fa-lock' title='unlock'></i>&emsp;");
           });
         }
       }
 
       function unlock(device) {
         if (device.indexOf("[") != -1) {
-          dev = device.split('["')[0];
-          name = device.split('["')[1].split('"]')[0];
+          dev = device.split("[")[0];
+          name = device.split("[")[1].split("]")[0];
+          name = name.replace(/\'/g, "");
+          name = name.replace(/\"/g, "");
           id = "_" + dev + "_" + name
           if ($("#" + id).attr("writable") == "True") {
             $("#" + id).removeAttr("disabled");
           }
           $("#" + id).attr({locked: "False"});
-          $("#lock" + id).html("<img src='{{ url_for('static', filename='unlocked.png') }}'>&emsp;");
+          $("#lock" + id).html("<i class='fa fa-unlock' title='lock'></i>&emsp;");
         }
         else {
           $.each($(".item:input[device=" + device + "]"), function() {
@@ -320,7 +393,7 @@
               $(this).removeAttr("disabled");
             }
             $(this).attr({locked: "False"});
-            $("#lock" + $(this).attr("id")).html("<img src='{{ url_for('static', filename='unlocked.png') }}'>&emsp;");
+            $("#lock" + $(this).attr("id")).html("<i class='fa fa-unlock' title='lock'></i>&emsp;");
           });
         }
       }
@@ -349,6 +422,10 @@
               if (method_data['state'] != "") {
                 $("#_" + method_data['device'] + "_state").val(method_data['state']);
               }
+              if (to_do['method'].indexOf(".restore()") != -1) {
+                device = to_do['method'].split(".", 1)[0];
+                restore(device, data_to_poll_arr[device]);
+              }
             }
             else {
               $.terminal.active(term.echo(method_data["traceback"]));
@@ -356,6 +433,25 @@
           }
         });
       };
+
+      function restore(device, data_to_poll) {
+        $.ajax({
+          type: "POST",
+          url: "/polling/{{ session_name }}",
+          data: JSON.stringify(data_to_poll),
+          dataType: "json",
+          success: function(polling_data) {
+            $.each(polling_data, function(index, json) {
+              if ($("#_" + json['device'] + "_" + json['name']).attr("type") == "number") {
+                $("#_" + json['device'] + "_" + json['name']).val(parseFloat(json['value']));
+              }
+              else {
+                $("#_" + json['device'] + "_" + json['name']).val(json['value']);
+              }
+            });
+          }
+        });
+      }
 
       $(".item:input").on('input', function() {
         focus_id = $(this).attr("id");
@@ -403,7 +499,9 @@
                 $("#_" + device + "_state").val("hard-limit");
               }
               else {
-                $("#_" + device + "_state").val("standby");
+                if ($("#_" + device + "_state").val() == "hard-limit") {
+                  $("#_" + device + "_state").val("standby");
+                }
               }
               if ($(id).val() > parseFloat($(id).attr("max"))) {
                 newVal = parseFloat($(id).attr("max"));
@@ -432,18 +530,42 @@
               term.echo(line_data['traceback']);
             }
             else {
+              device = line_data['device'];
+              id = "#_" + device + "_" + line_data['name'];
               if (line_data['output'] != "") {
                 term.echo(line_data['output']);
               }
-              if (line['execute'].indexOf(".lock()") != -1) {
-                device = line['execute'].split(".", 1)[0];
-                lock(device);
+              if (line['execute'].indexOf(".lock") != -1) {
+                dev = line['execute'].split(".", 1)[0];
+                lock(dev);
               }
-              else if (line['execute'].indexOf(".unlock()") != -1) {
-                device = line['execute'].split(".", 1)[0];
-                unlock(device);
+              else if (line['execute'].indexOf(".unlock") != -1) {
+                dev = line['execute'].split(".", 1)[0];
+                unlock(dev);
               }
-              id = "#_" + line_data['device'] + "_" + line_data['name'];
+              else if (line['execute'].indexOf(".restore()") != -1) {
+                if (line['execute'].indexOf("[") == -1) {
+                  restore_icon(device);
+                  restore(device, data_to_poll_arr[device]);
+                }
+                else {
+                  name = line['execute'].split("[")[1].split("]")[0];
+                  name = name.replace(/\'/g, "");
+                  name = name.replace(/\"/g, "");
+                  data_to_poll = [[device, name]];
+                  restore(device, data_to_poll);
+                }
+              }
+              else if ((line['execute'].indexOf(".stash()") != -1) && (line['execute'].indexOf("[") == -1)) {
+                stash_icon(device);
+              }
+              else if ((line['execute'].indexOf(".start_recording()") != -1) && (line_data["output"] == "")) {
+                device = line['execute'].split(".", 1)[0];
+                $("#_" + device + "_state").val("recording");
+              }
+              else if ((line['execute'].indexOf(".stop_recording()") != -1) && (line_data["output"] == "")) {
+                $("#_" + device + "_state").val("standby");
+              }
               if((!$(id).attr("disabled")) && ($(id).attr("locked") == "False") && (line_data['value'] != "")) {
                 if (line_data['value'] > parseFloat($(id).attr("max"))) {
                   $(id).val(parseFloat($(id).attr("max")));
@@ -455,19 +577,11 @@
                   $(id).val(line_data['value']);
                 }
               }
-              if ((line['execute'].indexOf(".start_recording()") != -1) && (line_data["output"] == "")) {
-                device = line['execute'].split(".", 1)[0];
-                $("#_" + device + "_state").val("recording");
-              }
-              if ((line['execute'].indexOf(".stop_recording()") != -1) && (line_data["output"] == "")) {
-                device = line['execute'].split(".", 1)[0];
-                $("#_" + device + "_state").val("standby");
-              }
               if (line_data['hardlimit'] == "True") {
-                $("#_" + line_data['device'] + "_state").val("hard-limit");
+                $("#_" + device + "_state").val("hard-limit");
               }
-              else {
-                $("#_" + line_data['device'] + "_state").val("standby");
+              else if ((line_data['hardlimit'] == "False") && ($("#_" + device + "_state").val() == "hard-limit")) {
+                $("#_" + device + "_state").val("standby");
               }
             }
           }
